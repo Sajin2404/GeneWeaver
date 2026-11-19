@@ -53,6 +53,29 @@ class CPUBaselineAlignment:
         elapsed = end_time - start_time
         print(f"[CPU Baseline] Completed in {elapsed:.4f} seconds. Found {len(results)} potential off-target matches.")
         return elapsed
+_IDX_TO_BASE = np.array(list("ACGTN"), dtype="S1")
+
+
+def _to_dna_str(seq) -> str:
+    if isinstance(seq, str):
+        return seq.upper()
+    arr = np.asarray(seq, dtype=np.uint8)
+    # Handle both 0..4 encoded indices and ASCII byte values ('A'=65, etc.)
+    if arr.size > 0 and arr.max() <= 4:
+        return _IDX_TO_BASE[arr].tobytes().decode("ascii")
+    return arr.tobytes().decode("ascii", errors="replace").upper()
+
+
+def run_cpu_benchmark(target_seq, grna_seq, max_mismatches: int = 3):
+    """Runs CPUBaselineAlignment and returns (matches, elapsed_seconds) for the dashboard."""
+    target_str = _to_dna_str(target_seq)
+    grna_str = _to_dna_str(grna_seq)
+
+    aligner = CPUBaselineAlignment(max_mismatches=max_mismatches)
+    start_time = time.perf_counter()
+    matches = aligner.align_sequence(target_str, grna_str)
+    elapsed = time.perf_counter() - start_time
+    return matches, elapsed
 
 if __name__ == "__main__":
     # Test stub using synthetic genomic data
