@@ -144,3 +144,6 @@ class GeneWeaverDashboard(App):
         self.call_from_thread(progress.advance, 50)
         self.call_from_thread(setattr, self.query_one("#start_btn", Button), "disabled", False)
         log.write_line("[PIPELINE] Scan complete.")
+
+if __name__ == "__main__":
+    GeneWeaverDashboard().run()
