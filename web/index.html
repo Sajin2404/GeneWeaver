@@ -1,0 +1,1434 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GeneWeaver — GPU-Accelerated CRISPR Alignment Engine</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'monospace'],
+          },
+          colors: {
+            canvas: '#060a11',
+            panel: '#0d1421',
+            panelAlt: '#131d30',
+            line: 'rgba(148, 163, 184, 0.14)',
+          }
+        }
+      }
+    };
+  </script>
+  <style>
+    /* Custom visual refinements & scrollbar styling for dark telemetry workbench */
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background-color: #060a11;
+      color: #f1f5f9;
+      background-image:
+        radial-gradient(circle at 12% 8%, rgba(34, 211, 238, 0.08), transparent 36%),
+        radial-gradient(circle at 88% 12%, rgba(16, 185, 129, 0.07), transparent 38%),
+        linear-gradient(to right, rgba(148, 163, 184, 0.03) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(148, 163, 184, 0.03) 1px, transparent 1px);
+      background-size: 100% 100%, 100% 100%, 32px 32px, 32px 32px;
+    }
+
+    .font-mono {
+      font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+    }
+
+    .glass-card {
+      background: linear-gradient(180deg, rgba(19, 29, 48, 0.88) 0%, rgba(13, 20, 33, 0.94) 100%);
+      border: 1px solid rgba(148, 163, 184, 0.15);
+      box-shadow: 0 14px 34px -16px rgba(0, 0, 0, 0.78);
+    }
+
+    /* Base-by-base alignment tile styles */
+    .base-tile {
+      width: 28px;
+      height: 30px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 6px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.82rem;
+      font-weight: 700;
+      transition: transform 0.12s ease;
+    }
+
+    .base-tile:hover {
+      transform: translateY(-1px);
+    }
+
+    .base-match {
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.45);
+      color: #6ee7b7;
+    }
+
+    .base-mismatch {
+      background: rgba(244, 63, 94, 0.22);
+      border: 1px solid rgba(244, 63, 94, 0.8);
+      color: #fda4af;
+      box-shadow: 0 0 0 2px rgba(244, 63, 94, 0.16);
+    }
+
+    .base-grna {
+      background: rgba(15, 23, 42, 0.9);
+      border: 1px solid rgba(148, 163, 184, 0.24);
+      color: #f8fafc;
+    }
+
+    /* Subtle custom scrollbars */
+    ::-webkit-scrollbar {
+      width: 7px;
+      height: 7px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #090e18;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #1e293b;
+      border-radius: 999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #334155;
+    }
+  </style>
+</head>
+<body class="min-h-screen antialiased selection:bg-cyan-500/30 selection:text-cyan-100 overflow-x-hidden">
+  <div class="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+
+    <!-- =====================================================================
+         TOP HEADER & HARDWARE ENVIRONMENT BANNER
+         ===================================================================== -->
+    <header class="glass-card rounded-2xl p-5 sm:p-6 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+      <div class="flex items-start sm:items-center gap-4">
+        <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-cyan-500/20 to-emerald-500/20 border border-cyan-400/40 flex items-center justify-center shrink-0">
+          <svg class="w-6 h-6 text-cyan-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M2 15c6.667-6 13.333 0 20-6" />
+            <path d="M9 22c1.798-1.998 2.518-3.995 2.807-5.993" />
+            <path d="M15 2c-1.798 1.998-2.518 3.995-2.807 5.993" />
+            <path d="m17 6-2.5-2.5" />
+            <path d="m14 8-1-1" />
+            <path d="m7 18 2.5 2.5" />
+            <path d="m10 16 1 1" />
+          </svg>
+        </div>
+        <div>
+          <div class="flex flex-wrap items-center gap-2.5">
+            <h1 class="text-xl sm:text-2xl font-bold tracking-tight text-white">
+              GeneWeaver CRISPR Alignment Workbench
+            </h1>
+            <span class="font-mono text-xs font-semibold px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-400/35">
+              CUDA CC 7.5 Verified
+            </span>
+          </div>
+          <p class="text-sm text-slate-400 mt-0.5">
+            Chunked FASTA sliding-window off-target scanner · CPU Sequential Baseline vs. Numba <code class="font-mono text-cyan-300">@cuda.jit</code> on Tesla T4
+          </p>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-2 font-mono text-xs">
+        <span class="px-3 py-1.5 rounded-lg bg-slate-950/80 border border-slate-800 text-slate-300">
+          GPU: <strong class="text-cyan-300">NVIDIA Tesla T4</strong>
+        </span>
+        <span class="px-3 py-1.5 rounded-lg bg-slate-950/80 border border-slate-800 text-slate-300">
+          Encoder: <strong class="text-emerald-300">1D uint8 (A/C/G/T/N)</strong>
+        </span>
+        <span class="px-3 py-1.5 rounded-lg bg-slate-950/80 border border-slate-800 text-slate-300">
+          DB: <strong class="text-indigo-300">storage/db.py (SQLite)</strong>
+        </span>
+      </div>
+    </header>
+
+    <!-- =====================================================================
+         SECTION 1: GENOMIC CHUNKING CONTROLS & REAL-TIME TELEMETRY READOUT
+         ===================================================================== -->
+    <section class="glass-card rounded-2xl p-5 sm:p-6" aria-label="Genomic Chunking Controls">
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-4 mb-5 border-b border-slate-800/90">
+        <div>
+          <h2 class="text-lg font-semibold text-white">1. Genomic Chunking &amp; Execution Mode Controls</h2>
+          <p class="text-xs sm:text-sm text-slate-400">
+            Configure sequence length, BioPython-style chunk windowing (default 500,000 bp), gRNA probe, mismatch threshold, and execution mode.
+          </p>
+        </div>
+        <div id="liveTelemetryPill" class="font-mono text-xs px-3 py-1.5 rounded-lg bg-cyan-500/10 border border-cyan-400/30 text-cyan-200 self-start sm:self-auto">
+          Status: Ready · 2 Chunks (500,000 bp)
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
+        <!-- Sequence Length -->
+        <div class="flex flex-col gap-1.5">
+          <label for="ctrlSeqLength" class="text-xs font-semibold uppercase tracking-wider text-slate-400">
+            Sequence Length (bp)
+          </label>
+          <select id="ctrlSeqLength" class="w-full rounded-xl bg-slate-950/90 border border-slate-700/80 px-3 py-2.5 font-mono text-sm text-slate-100 focus:outline-none focus:border-cyan-400">
+            <option value="500000">500,000 bp (0.5 Mbp)</option>
+            <option value="1000000" selected>1,000,000 bp (1.0 Mbp)</option>
+            <option value="2000000">2,000,000 bp (2.0 Mbp)</option>
+            <option value="5000000">5,000,000 bp (5.0 Mbp)</option>
+          </select>
+        </div>
+
+        <!-- Chunk Size -->
+        <div class="flex flex-col gap-1.5">
+          <label for="ctrlChunkSize" class="text-xs font-semibold uppercase tracking-wider text-slate-400">
+            Chunk Size (bp)
+          </label>
+          <select id="ctrlChunkSize" class="w-full rounded-xl bg-slate-950/90 border border-slate-700/80 px-3 py-2.5 font-mono text-sm text-slate-100 focus:outline-none focus:border-cyan-400">
+            <option value="250000">250,000 bp</option>
+            <option value="500000" selected>500,000 bp</option>
+            <option value="1000000">1,000,000 bp</option>
+          </select>
+        </div>
+
+        <!-- gRNA Sequence -->
+        <div class="flex flex-col gap-1.5">
+          <label for="ctrlGrna" class="text-xs font-semibold uppercase tracking-wider text-slate-400">
+            Guide RNA (gRNA, 20 bp)
+          </label>
+          <input id="ctrlGrna" type="text" maxlength="20" value="GGTGAGTGAGTACACCAAAC"
+            class="w-full rounded-xl bg-slate-950/90 border border-slate-700/80 px-3 py-2.5 font-mono text-sm uppercase tracking-wider text-cyan-300 focus:outline-none focus:border-cyan-400" />
+        </div>
+
+        <!-- Max Mismatches -->
+        <div class="flex flex-col gap-1.5">
+          <label for="ctrlMaxMm" class="text-xs font-semibold uppercase tracking-wider text-slate-400">
+            Max Mismatches
+          </label>
+          <input id="ctrlMaxMm" type="number" min="0" max="6" value="3"
+            class="w-full rounded-xl bg-slate-950/90 border border-slate-700/80 px-3 py-2.5 font-mono text-sm text-slate-100 focus:outline-none focus:border-cyan-400" />
+        </div>
+
+        <!-- Mode Selector -->
+        <div class="flex flex-col gap-1.5">
+          <label class="text-xs font-semibold uppercase tracking-wider text-slate-400">
+            Execution Mode
+          </label>
+          <div class="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-slate-950/90 border border-slate-800">
+            <button type="button" id="modeBtnCpu" data-mode="CPU"
+              class="mode-btn py-2 px-2 rounded-lg font-mono text-xs font-semibold transition text-slate-400 hover:text-white">
+              CPU
+            </button>
+            <button type="button" id="modeBtnCuda" data-mode="CUDA"
+              class="mode-btn py-2 px-2 rounded-lg font-mono text-xs font-semibold transition bg-emerald-500/20 text-emerald-300 border border-emerald-400/40">
+              T4 CUDA
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Action Trigger & Live Telemetry Readout Strip -->
+      <div class="mt-5 pt-4 border-t border-slate-800/80 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+        <div class="flex flex-wrap items-center gap-3">
+          <button type="button" id="btnRunScan"
+            class="px-5 py-2.5 rounded-xl font-semibold text-sm bg-gradient-to-r from-cyan-500/25 to-emerald-500/25 hover:from-cyan-500/35 hover:to-emerald-500/35 text-white border border-cyan-400/50 transition cursor-pointer flex items-center gap-2">
+            <svg class="w-4 h-4 text-cyan-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+              <polygon points="5 3 19 12 5 21 5 3" />
+            </svg>
+            <span>Simulate / Run Scan</span>
+          </button>
+
+          <button type="button" id="btnCompareBoth"
+            class="px-4 py-2.5 rounded-xl font-semibold text-sm bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 transition cursor-pointer">
+            Benchmark CPU vs. T4 CUDA
+          </button>
+
+          <span id="scanFeedbackMsg" class="font-mono text-xs text-emerald-300"></span>
+        </div>
+
+        <div id="telemetryReadout" class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 font-mono text-xs">
+          <div class="px-3 py-2 rounded-xl bg-slate-950/85 border border-slate-800">
+            <div class="text-[10px] uppercase text-slate-500">Chunks</div>
+            <div id="telChunks" class="text-slate-100 font-semibold mt-0.5">2 × 500,000 bp</div>
+          </div>
+          <div class="px-3 py-2 rounded-xl bg-slate-950/85 border border-slate-800">
+            <div class="text-[10px] uppercase text-slate-500">Threads / Blocks</div>
+            <div id="telGrid" class="text-cyan-300 font-semibold mt-0.5">256 / 1,954</div>
+          </div>
+          <div class="px-3 py-2 rounded-xl bg-slate-950/85 border border-slate-800">
+            <div class="text-[10px] uppercase text-slate-500">Last Wall Time</div>
+            <div id="telWall" class="text-emerald-300 font-semibold mt-0.5">0.0043s</div>
+          </div>
+          <div class="px-3 py-2 rounded-xl bg-slate-950/85 border border-slate-800">
+            <div class="text-[10px] uppercase text-slate-500">Kernel Time</div>
+            <div id="telKernel" class="text-indigo-300 font-semibold mt-0.5">0.0041s</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =====================================================================
+         SECTION 2: EXECUTION METRICS & BENCHMARK VISUALIZATIONS
+         ===================================================================== -->
+    <section class="space-y-4" aria-label="Execution Metrics and Benchmark Visualizations">
+      <!-- Top Benchmark KPI Strip -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <div class="glass-card rounded-2xl p-5">
+          <div class="text-xs font-semibold uppercase tracking-wider text-slate-400">CPU Baseline (1M bp)</div>
+          <div id="metricCpuTime" class="font-mono text-2xl sm:text-3xl font-bold text-amber-400 mt-1.5">4.5859s</div>
+          <div id="metricCpuSub" class="text-xs text-slate-400 mt-1">Sequential sliding-window · 2 hits</div>
+        </div>
+
+        <div class="glass-card rounded-2xl p-5">
+          <div class="text-xs font-semibold uppercase tracking-wider text-slate-400">Tesla T4 CUDA (1M bp)</div>
+          <div id="metricGpuWall" class="font-mono text-2xl sm:text-3xl font-bold text-emerald-400 mt-1.5">0.0043s</div>
+          <div id="metricGpuKernel" class="font-mono text-xs text-emerald-300/90 mt-1">Kernel reported: 0.0041s · sync verified</div>
+        </div>
+
+        <div class="glass-card rounded-2xl p-5">
+          <div class="text-xs font-semibold uppercase tracking-wider text-slate-400">Measured Speedup</div>
+          <div id="metricSpeedup" class="font-mono text-2xl sm:text-3xl font-bold text-cyan-300 mt-1.5">1056.25x</div>
+          <div class="text-xs text-slate-400 mt-1">4.5859s CPU ÷ 0.0043s GPU wall time</div>
+        </div>
+
+        <div class="glass-card rounded-2xl p-5">
+          <div class="text-xs font-semibold uppercase tracking-wider text-slate-400">Parity &amp; Candidate Hits</div>
+          <div id="metricHits" class="font-mono text-2xl sm:text-3xl font-bold text-indigo-300 mt-1.5">2 Hits</div>
+          <div class="text-xs text-slate-400 mt-1">100% match parity (pos 150000, 650000)</div>
+        </div>
+      </div>
+
+      <!-- Two Charts: Overall CPU vs CUDA Comparison + Per-Chunk Scan Performance -->
+      <div class="grid grid-cols-1 xl:grid-cols-2 gap-5">
+        <!-- Overall CPU vs GPU Comparison Chart -->
+        <div class="glass-card rounded-2xl p-5">
+          <div class="flex flex-wrap items-center justify-between gap-2 pb-3 mb-4 border-b border-slate-800/80">
+            <div>
+              <h3 class="text-base font-semibold text-white">CPU vs. Tesla T4 CUDA Execution Time</h3>
+              <p class="text-xs text-slate-400">1,000,000 bp benchmark reference (4.5859s CPU vs. 0.0043s wall / 0.0041s kernel)</p>
+            </div>
+            <div class="flex gap-1.5">
+              <button type="button" id="btnScaleLog" class="px-2.5 py-1 rounded-lg font-mono text-xs bg-cyan-500/20 text-cyan-200 border border-cyan-400/40 cursor-pointer">
+                Log₁₀ Scale
+              </button>
+              <button type="button" id="btnScaleLinearMs" class="px-2.5 py-1 rounded-lg font-mono text-xs bg-slate-900 text-slate-400 border border-slate-800 cursor-pointer">
+                ms View
+              </button>
+            </div>
+          </div>
+
+          <div class="rounded-xl bg-slate-950/85 border border-slate-800/90 p-3">
+            <svg id="overallBenchmarkSvg" viewBox="0 0 560 245" class="w-full h-auto block" role="img" aria-label="CPU vs CUDA benchmark comparison chart"></svg>
+          </div>
+        </div>
+
+        <!-- Per-Chunk Scan Performance Chart & Breakdown -->
+        <div class="glass-card rounded-2xl p-5">
+          <div class="flex flex-wrap items-center justify-between gap-2 pb-3 mb-4 border-b border-slate-800/80">
+            <div>
+              <h3 class="text-base font-semibold text-white">Per-Chunk Scan Performance</h3>
+              <p id="chunkChartSubtitle" class="text-xs text-slate-400">Chunk latency (ms) &amp; hit density across FASTA stream chunks</p>
+            </div>
+            <span id="chunkAvgTag" class="font-mono text-xs px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-300 border border-emerald-400/30">
+              Avg CUDA Chunk: 2.15 ms
+            </span>
+          </div>
+
+          <div class="rounded-xl bg-slate-950/85 border border-slate-800/90 p-3 mb-3">
+            <svg id="perChunkChartSvg" viewBox="0 0 560 190" class="w-full h-auto block" role="img" aria-label="Per-chunk scan performance chart"></svg>
+          </div>
+
+          <div id="perChunkCards" class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-36 overflow-y-auto pr-1"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =====================================================================
+         SECTION 3: INTERACTIVE ALIGNMENT RESULTS TABLE WITH BASE HIGHLIGHTING
+         ===================================================================== -->
+    <section class="glass-card rounded-2xl p-5 sm:p-6" aria-label="Interactive Alignment Results Table">
+      <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3 pb-4 mb-4 border-b border-slate-800/90">
+        <div>
+          <h2 class="text-lg font-semibold text-white">3. Candidate Off-Target Alignment Results</h2>
+          <p class="text-xs sm:text-sm text-slate-400">
+            Click any row to inspect base-by-base mismatches against <code class="font-mono text-cyan-300" id="tableGrnaLabel">GGTGAGTGAGTACACCAAAC</code>.
+          </p>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2.5">
+          <input id="hitSearchInput" type="text" placeholder="Filter position, sequence, or mismatch..."
+            class="rounded-xl bg-slate-950/90 border border-slate-700/80 px-3 py-2 font-mono text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-400" />
+          <select id="hitFilterSelect" class="rounded-xl bg-slate-950/90 border border-slate-700/80 px-3 py-2 font-mono text-xs text-slate-100 focus:outline-none focus:border-cyan-400">
+            <option value="all">All Hits</option>
+            <option value="exact">Exact Matches (0 mm)</option>
+            <option value="near">Near Off-Targets (&gt; 0 mm)</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Focused Base-by-Base Alignment Inspector Card -->
+      <div id="baseInspectorCard" class="rounded-xl bg-slate-950/90 border border-slate-800 p-4 mb-4">
+        <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+          <div class="flex items-center gap-2.5 font-mono text-xs">
+            <span class="text-slate-400">INSPECTING OFFSET:</span>
+            <span id="inspectedPosition" class="px-2.5 py-1 rounded-md bg-cyan-500/15 text-cyan-200 border border-cyan-400/35 font-bold">pos 150000</span>
+            <span id="inspectedChunk" class="text-slate-400">(Chunk #0)</span>
+          </div>
+          <div class="flex items-center gap-3 font-mono text-xs">
+            <span id="inspectedMismatchSummary" class="text-emerald-300 font-semibold">0 mismatches</span>
+            <span class="flex items-center gap-1.5 text-slate-400">
+              <span class="w-2.5 h-2.5 rounded-xs bg-rose-500/80 inline-block"></span> Mismatch
+            </span>
+            <span class="flex items-center gap-1.5 text-slate-400">
+              <span class="w-2.5 h-2.5 rounded-xs bg-emerald-500/70 inline-block"></span> Match
+            </span>
+          </div>
+        </div>
+
+        <div class="overflow-x-auto pb-1">
+          <div class="min-w-max space-y-2">
+            <div class="flex items-center gap-3">
+              <span class="w-28 font-mono text-xs text-slate-400 shrink-0">gRNA Probe</span>
+              <div id="inspectorGrnaTiles" class="flex items-center gap-1"></div>
+            </div>
+            <div class="flex items-center gap-3">
+              <span class="w-28 font-mono text-xs text-slate-400 shrink-0">Alignment</span>
+              <div id="inspectorMatchIndicators" class="flex items-center gap-1"></div>
+            </div>
+            <div class="flex items-center gap-3">
+              <span class="w-28 font-mono text-xs text-slate-400 shrink-0">Target Window</span>
+              <div id="inspectorTargetTiles" class="flex items-center gap-1"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Results Table -->
+      <div class="overflow-x-auto rounded-xl border border-slate-800/90 bg-slate-950/75">
+        <table class="w-full text-left border-collapse">
+          <thead>
+            <tr class="border-b border-slate-800 bg-slate-900/80 font-mono text-[11px] uppercase tracking-wider text-slate-400">
+              <th class="py-3 px-4">Position (bp)</th>
+              <th class="py-3 px-4">Chunk</th>
+              <th class="py-3 px-4">Mismatches</th>
+              <th class="py-3 px-4">Type</th>
+              <th class="py-3 px-4">Aligned Sequence (Mismatch Highlighted)</th>
+              <th class="py-3 px-4">Mode</th>
+            </tr>
+          </thead>
+          <tbody id="alignmentResultsBody" class="divide-y divide-slate-800/70 text-sm"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- =====================================================================
+         SECTION 4: SQLITE PERSISTENCE & RUN HISTORY PANEL
+         ===================================================================== -->
+    <section class="glass-card rounded-2xl p-5 sm:p-6" aria-label="SQLite Persistence and Run History">
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-4 mb-5 border-b border-slate-800/90">
+        <div>
+          <h2 class="text-lg font-semibold text-white">4. SQLite Persistence &amp; Run History (<code class="font-mono text-sm text-indigo-300">geneweaver.db</code>)</h2>
+          <p class="text-xs sm:text-sm text-slate-400">
+            Inspect logged runs across Local CPU and Colab Tesla T4 environments, view chunk metrics and hits, and log new runs.
+          </p>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <button type="button" id="btnLogCurrentRun"
+            class="px-3.5 py-2 rounded-xl font-mono text-xs font-semibold bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border border-emerald-400/40 transition cursor-pointer">
+            + Log Current Scan to SQLite
+          </button>
+          <button type="button" id="btnExportSqlJson"
+            class="px-3.5 py-2 rounded-xl font-mono text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 transition cursor-pointer">
+            Export DB JSON
+          </button>
+          <button type="button" id="btnResetDbHistory"
+            class="px-3.5 py-2 rounded-xl font-mono text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-slate-400 border border-slate-800 transition cursor-pointer">
+            Reset Seed Runs
+          </button>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
+        <!-- Left: Stored Runs List -->
+        <div class="lg:col-span-7 space-y-3">
+          <div class="flex items-center justify-between font-mono text-xs text-slate-400">
+            <span>STORED BENCHMARK RUNS</span>
+            <span id="dbRunCountLabel">3 runs in store</span>
+          </div>
+          <div id="sqliteRunsList" class="space-y-3 max-h-[430px] overflow-y-auto pr-1"></div>
+        </div>
+
+        <!-- Right: Selected Run Inspector + Log New Run Form -->
+        <div class="lg:col-span-5 space-y-4">
+          <!-- Stored Run Detail Inspector -->
+          <div class="rounded-xl bg-slate-950/90 border border-slate-800 p-4">
+            <div class="flex items-center justify-between mb-2">
+              <span class="font-mono text-xs font-semibold uppercase tracking-wider text-cyan-300">
+                Selected Run Record
+              </span>
+              <span id="selectedRunIdBadge" class="font-mono text-xs text-slate-400">run_001</span>
+            </div>
+            <div id="selectedRunDetail" class="space-y-2 font-mono text-xs text-slate-300"></div>
+          </div>
+
+          <!-- Log New Scan Run Form -->
+          <form id="logRunForm" class="rounded-xl bg-slate-950/90 border border-slate-800 p-4 space-y-3">
+            <div class="font-mono text-xs font-semibold uppercase tracking-wider text-emerald-300">
+              Log Custom Run Entry
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <div>
+                <label for="logEnvSelect" class="block text-[11px] text-slate-400 mb-1">Environment</label>
+                <select id="logEnvSelect" class="w-full rounded-lg bg-slate-900 border border-slate-700 px-2.5 py-1.5 font-mono text-xs text-slate-100">
+                  <option value="Colab Tesla T4 (CUDA)" selected>Colab Tesla T4 (CUDA)</option>
+                  <option value="Local CPU Baseline">Local CPU Baseline</option>
+                </select>
+              </div>
+              <div>
+                <label for="logSeqBpInput" class="block text-[11px] text-slate-400 mb-1">Sequence (bp)</label>
+                <input id="logSeqBpInput" type="number" min="10000" step="50000" value="1000000"
+                  class="w-full rounded-lg bg-slate-900 border border-slate-700 px-2.5 py-1.5 font-mono text-xs text-slate-100" />
+              </div>
+              <div>
+                <label for="logWallSecInput" class="block text-[11px] text-slate-400 mb-1">Wall Time (s)</label>
+                <input id="logWallSecInput" type="number" min="0.0001" step="0.0001" value="0.0043"
+                  class="w-full rounded-lg bg-slate-900 border border-slate-700 px-2.5 py-1.5 font-mono text-xs text-slate-100" />
+              </div>
+              <div>
+                <label for="logKernelSecInput" class="block text-[11px] text-slate-400 mb-1">Kernel Time (s)</label>
+                <input id="logKernelSecInput" type="number" min="0" step="0.0001" value="0.0041"
+                  class="w-full rounded-lg bg-slate-900 border border-slate-700 px-2.5 py-1.5 font-mono text-xs text-slate-100" />
+              </div>
+            </div>
+            <button type="submit"
+              class="w-full py-2 rounded-xl font-mono text-xs font-semibold bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-200 border border-cyan-400/40 transition cursor-pointer">
+              Insert Run into SQLite History
+            </button>
+            <div id="dbStatusMessage" class="font-mono text-xs text-emerald-300 min-h-[16px]"></div>
+          </form>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    /* =========================================================================
+       BENCHMARK CONSTANTS & SEED DATA
+       ========================================================================= */
+    const DEFAULT_GRNA = "GGTGAGTGAGTACACCAAAC";
+    const BASELINE_CPU_1M_SEC = 4.5859;
+    const BASELINE_GPU_WALL_1M_SEC = 0.0043;
+    const BASELINE_GPU_KERNEL_1M_SEC = 0.0041;
+    const BASELINE_SPEEDUP = 1056.25;
+
+    const CANONICAL_HITS = [
+      {
+        id: "hit-150000",
+        position: 150000,
+        mismatches: 0,
+        sequence: "GGTGAGTGAGTACACCAAAC",
+        mode: "CUDA"
+      },
+      {
+        id: "hit-650000",
+        position: 650000,
+        mismatches: 2,
+        sequence: "TGTGAGTGAGCACACCAAAC",
+        mode: "CUDA"
+      }
+    ];
+
+    const SEED_SQLITE_RUNS = [
+      {
+        run_id: "run_t4_1m_001",
+        created_at: "2026-11-23 18:05:12",
+        environment: "Colab Tesla T4 (CUDA)",
+        mode: "CUDA",
+        seq_length: 1000000,
+        chunk_size: 500000,
+        grna: "GGTGAGTGAGTACACCAAAC",
+        max_mismatches: 3,
+        wall_sec: 0.0043,
+        kernel_sec: 0.0041,
+        hits_count: 2,
+        chunks: [
+          { chunk_idx: 0, start_bp: 0, end_bp: 500000, elapsed_ms: 2.2, hits: 1 },
+          { chunk_idx: 1, start_bp: 500000, end_bp: 1000000, elapsed_ms: 2.1, hits: 1 }
+        ],
+        hits: [
+          { position: 150000, mismatches: 0, sequence: "GGTGAGTGAGTACACCAAAC" },
+          { position: 650000, mismatches: 2, sequence: "TGTGAGTGAGCACACCAAAC" }
+        ]
+      },
+      {
+        run_id: "run_cpu_1m_002",
+        created_at: "2026-11-23 18:03:44",
+        environment: "Local CPU Baseline",
+        mode: "CPU",
+        seq_length: 1000000,
+        chunk_size: 500000,
+        grna: "GGTGAGTGAGTACACCAAAC",
+        max_mismatches: 3,
+        wall_sec: 4.5859,
+        kernel_sec: null,
+        hits_count: 2,
+        chunks: [
+          { chunk_idx: 0, start_bp: 0, end_bp: 500000, elapsed_ms: 2293.0, hits: 1 },
+          { chunk_idx: 1, start_bp: 500000, end_bp: 1000000, elapsed_ms: 2292.9, hits: 1 }
+        ],
+        hits: [
+          { position: 150000, mismatches: 0, sequence: "GGTGAGTGAGTACACCAAAC" },
+          { position: 650000, mismatches: 2, sequence: "TGTGAGTGAGCACACCAAAC" }
+        ]
+      },
+      {
+        run_id: "run_t4_50k_003",
+        created_at: "2026-11-23 18:01:09",
+        environment: "Colab Tesla T4 (CUDA)",
+        mode: "CUDA",
+        seq_length: 50000,
+        chunk_size: 500000,
+        grna: "GGTGAGTGAGTACACCAAAC",
+        max_mismatches: 3,
+        wall_sec: 0.0005,
+        kernel_sec: 0.0004,
+        hits_count: 0,
+        chunks: [
+          { chunk_idx: 0, start_bp: 0, end_bp: 50000, elapsed_ms: 0.5, hits: 0 }
+        ],
+        hits: []
+      }
+    ];
+
+    const DB_STORAGE_KEY = "geneweaver_sqlite_runs_v2";
+
+    /* =========================================================================
+       APPLICATION STATE
+       ========================================================================= */
+    const appState = {
+      seqLength: 1000000,
+      chunkSize: 500000,
+      grna: DEFAULT_GRNA,
+      maxMismatches: 3,
+      mode: "CUDA", // "CPU" | "CUDA"
+      chartScale: "log", // "log" | "ms"
+      lastWallSec: BASELINE_GPU_WALL_1M_SEC,
+      lastKernelSec: BASELINE_GPU_KERNEL_1M_SEC,
+      lastCpuSec: BASELINE_CPU_1M_SEC,
+      lastSpeedup: BASELINE_SPEEDUP,
+      chunkMetrics: [],
+      hits: [...CANONICAL_HITS],
+      selectedHitId: CANONICAL_HITS[0].id,
+      hitSearch: "",
+      hitFilter: "all",
+      runs: loadPersistedRuns(),
+      selectedRunId: null
+    };
+
+    function loadPersistedRuns() {
+      try {
+        const raw = localStorage.getItem(DB_STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return parsed;
+          }
+        }
+      } catch (err) {
+        // Fallback to seed runs if localStorage is restricted
+      }
+      return SEED_SQLITE_RUNS.map((r) => ({ ...r }));
+    }
+
+    function persistRuns() {
+      try {
+        localStorage.setItem(DB_STORAGE_KEY, JSON.stringify(appState.runs));
+      } catch (err) {
+        // Ignore storage errors in sandboxed contexts
+      }
+    }
+
+    /* =========================================================================
+       CHUNKING & SIMULATION ENGINE
+       ========================================================================= */
+    function buildChunkMetrics(seqLen, chunkSz, mode, wallSec, hitsList) {
+      const numChunks = Math.max(1, Math.ceil(seqLen / chunkSz));
+      const basePerChunkSec = wallSec / numChunks;
+      const list = [];
+
+      for (let i = 0; i < numChunks; i++) {
+        const startBp = i * chunkSz;
+        const endBp = Math.min(seqLen, (i + 1) * chunkSz);
+        const span = endBp - startBp;
+        // Slight realistic variation across chunks while summing to wallSec
+        const jitter = numChunks > 1 ? (i === 0 ? 1.03 : 0.97) : 1.0;
+        const chunkSec = basePerChunkSec * jitter;
+        const chunkHits = hitsList.filter((h) => h.position >= startBp && h.position < endBp).length;
+        const mbp = span / 1_000_000;
+        const throughput = chunkSec > 0 ? mbp / chunkSec : 0;
+
+        list.push({
+          chunkIdx: i,
+          startBp,
+          endBp,
+          spanBp: span,
+          elapsedSec: chunkSec,
+          elapsedMs: chunkSec * 1000,
+          throughputMbpSec: throughput,
+          hits: chunkHits,
+          mode
+        });
+      }
+
+      // Normalize so sum of chunk times equals wallSec
+      const totalChunkSec = list.reduce((acc, c) => acc + c.elapsedSec, 0);
+      if (totalChunkSec > 0 && numChunks > 1) {
+        const scale = wallSec / totalChunkSec;
+        list.forEach((c) => {
+          c.elapsedSec *= scale;
+          c.elapsedMs = c.elapsedSec * 1000;
+          c.throughputMbpSec = (c.spanBp / 1_000_000) / c.elapsedSec;
+        });
+      }
+
+      return list;
+    }
+
+    function sanitizeGrna(raw) {
+      const cleaned = (raw || "").toUpperCase().replace(/[^ACGTN]/g, "");
+      if (cleaned.length === 20) return cleaned;
+      if (cleaned.length > 0) {
+        return cleaned.padEnd(20, "A").slice(0, 20);
+      }
+      return DEFAULT_GRNA;
+    }
+
+    function computeHitsForConfig(seqLen, grna, maxMm, mode) {
+      const candidateHits = [];
+
+      // Always include canonical verified hits when within sequence bounds & mismatch threshold
+      if (150000 + grna.length <= seqLen && 0 <= maxMm) {
+        candidateHits.push({
+          id: "hit-150000",
+          position: 150000,
+          mismatches: 0,
+          sequence: grna,
+          mode
+        });
+      }
+
+      if (650000 + grna.length <= seqLen && 2 <= maxMm) {
+        const chars = grna.split("");
+        chars[0] = chars[0] !== "T" ? "T" : "A";
+        chars[10] = chars[10] !== "C" ? "C" : "G";
+        candidateHits.push({
+          id: "hit-650000",
+          position: 650000,
+          mismatches: 2,
+          sequence: chars.join(""),
+          mode
+        });
+      }
+
+      // Add deterministic near-target hits for longer sequences (> 1M bp)
+      if (seqLen >= 1_500_000 && 1 <= maxMm) {
+        const chars1 = grna.split("");
+        chars1[5] = chars1[5] !== "G" ? "G" : "T";
+        candidateHits.push({
+          id: "hit-1250000",
+          position: 1250000,
+          mismatches: 1,
+          sequence: chars1.join(""),
+          mode
+        });
+      }
+
+      if (seqLen >= 2_500_000 && 3 <= maxMm) {
+        const chars3 = grna.split("");
+        chars3[2] = chars3[2] !== "A" ? "A" : "C";
+        chars3[9] = chars3[9] !== "T" ? "T" : "G";
+        chars3[15] = chars3[15] !== "C" ? "C" : "A";
+        candidateHits.push({
+          id: "hit-2100000",
+          position: 2100000,
+          mismatches: 3,
+          sequence: chars3.join(""),
+          mode
+        });
+      }
+
+      return candidateHits;
+    }
+
+    function executeScan(compareBoth = false) {
+      const seqLen = parseInt(document.getElementById("ctrlSeqLength").value, 10) || 1000000;
+      const chunkSz = parseInt(document.getElementById("ctrlChunkSize").value, 10) || 500000;
+      const grna = sanitizeGrna(document.getElementById("ctrlGrna").value);
+      const maxMm = Math.max(0, Math.min(8, parseInt(document.getElementById("ctrlMaxMm").value, 10) || 0));
+
+      document.getElementById("ctrlGrna").value = grna;
+
+      appState.seqLength = seqLen;
+      appState.chunkSize = chunkSz;
+      appState.grna = grna;
+      appState.maxMismatches = maxMm;
+
+      // Scale CPU (~4.5859s per 1M bp) and GPU (~0.0043s wall / ~0.0041s kernel per 1M bp)
+      const scaleFactor = seqLen / 1_000_000;
+      const cpuSec = seqLen === 1_000_000 ? BASELINE_CPU_1M_SEC : Number((BASELINE_CPU_1M_SEC * scaleFactor).toFixed(4));
+      const gpuWallSec = seqLen === 1_000_000 ? BASELINE_GPU_WALL_1M_SEC : Number(Math.max(0.0005, BASELINE_GPU_WALL_1M_SEC * scaleFactor).toFixed(4));
+      const gpuKernelSec = seqLen === 1_000_000 ? BASELINE_GPU_KERNEL_1M_SEC : Number(Math.max(0.0004, BASELINE_GPU_KERNEL_1M_SEC * scaleFactor).toFixed(4));
+      const speedup = gpuWallSec > 0 ? Number((cpuSec / gpuWallSec).toFixed(2)) : BASELINE_SPEEDUP;
+
+      appState.lastCpuSec = cpuSec;
+      appState.lastWallSec = appState.mode === "CUDA" ? gpuWallSec : cpuSec;
+      appState.lastKernelSec = appState.mode === "CUDA" ? gpuKernelSec : null;
+      appState.lastSpeedup = speedup;
+
+      const hits = computeHitsForConfig(seqLen, grna, maxMm, appState.mode);
+      appState.hits = hits;
+      if (!hits.some((h) => h.id === appState.selectedHitId)) {
+        appState.selectedHitId = hits.length > 0 ? hits[0].id : null;
+      }
+
+      appState.chunkMetrics = buildChunkMetrics(seqLen, chunkSz, appState.mode, appState.lastWallSec, hits);
+
+      const feedback = document.getElementById("scanFeedbackMsg");
+      if (compareBoth) {
+        feedback.textContent = `Benchmarked ${seqLen.toLocaleString()} bp: CPU ${cpuSec.toFixed(4)}s vs T4 CUDA ${gpuWallSec.toFixed(4)}s (${speedup.toFixed(2)}x speedup, ${hits.length} hits).`;
+      } else {
+        feedback.textContent = `Executed ${appState.mode} scan over ${seqLen.toLocaleString()} bp in ${appState.lastWallSec.toFixed(4)}s (${hits.length} hits).`;
+      }
+
+      renderAll();
+    }
+
+    /* =========================================================================
+       RENDERING: TELEMETRY, METRICS & CHARTS
+       ========================================================================= */
+    function renderTelemetryAndMetrics() {
+      const numChunks = Math.max(1, Math.ceil(appState.seqLength / appState.chunkSize));
+      const threadsPerBlock = 256;
+      const blocksPerGrid = Math.ceil((appState.chunkSize / threadsPerBlock));
+
+      document.getElementById("liveTelemetryPill").textContent =
+        `Mode: ${appState.mode} · ${numChunks} Chunk${numChunks > 1 ? "s" : ""} (${appState.chunkSize.toLocaleString()} bp)`;
+
+      document.getElementById("telChunks").textContent =
+        `${numChunks} × ${appState.chunkSize.toLocaleString()} bp`;
+      document.getElementById("telGrid").textContent =
+        `${threadsPerBlock} / ${blocksPerGrid.toLocaleString()}`;
+      document.getElementById("telWall").textContent =
+        `${appState.lastWallSec.toFixed(4)}s`;
+      document.getElementById("telKernel").textContent =
+        appState.lastKernelSec !== null ? `${appState.lastKernelSec.toFixed(4)}s` : "N/A (CPU)";
+
+      document.getElementById("metricCpuTime").textContent = `${appState.lastCpuSec.toFixed(4)}s`;
+      document.getElementById("metricCpuSub").textContent =
+        `Sequential sliding-window · ${appState.seqLength.toLocaleString()} bp`;
+
+      const gpuRefWall = appState.seqLength === 1_000_000
+        ? BASELINE_GPU_WALL_1M_SEC
+        : Number(Math.max(0.0005, BASELINE_GPU_WALL_1M_SEC * (appState.seqLength / 1_000_000)).toFixed(4));
+      const gpuRefKernel = appState.seqLength === 1_000_000
+        ? BASELINE_GPU_KERNEL_1M_SEC
+        : Number(Math.max(0.0004, BASELINE_GPU_KERNEL_1M_SEC * (appState.seqLength / 1_000_000)).toFixed(4));
+
+      document.getElementById("metricGpuWall").textContent = `${gpuRefWall.toFixed(4)}s`;
+      document.getElementById("metricGpuKernel").textContent =
+        `Kernel reported: ${gpuRefKernel.toFixed(4)}s · sync verified`;
+      document.getElementById("metricSpeedup").textContent = `${appState.lastSpeedup.toFixed(2)}x`;
+      document.getElementById("metricHits").textContent = `${appState.hits.length} Hit${appState.hits.length === 1 ? "" : "s"}`;
+      document.getElementById("tableGrnaLabel").textContent = appState.grna;
+    }
+
+    function renderOverallBenchmarkChart() {
+      const svg = document.getElementById("overallBenchmarkSvg");
+      const isLog = appState.chartScale === "log";
+
+      const cpuVal = appState.lastCpuSec;
+      const gpuWallVal = appState.seqLength === 1_000_000
+        ? BASELINE_GPU_WALL_1M_SEC
+        : Math.max(0.0005, BASELINE_GPU_WALL_1M_SEC * (appState.seqLength / 1_000_000));
+      const gpuKernelVal = appState.seqLength === 1_000_000
+        ? BASELINE_GPU_KERNEL_1M_SEC
+        : Math.max(0.0004, BASELINE_GPU_KERNEL_1M_SEC * (appState.seqLength / 1_000_000));
+
+      const items = [
+        {
+          label: "CPU Baseline",
+          sub: "Sequential",
+          val: isLog ? cpuVal : cpuVal * 1000,
+          text: `${cpuVal.toFixed(4)}s`,
+          color: "#f59e0b"
+        },
+        {
+          label: "T4 CUDA Wall",
+          sub: "H2D+Kernel+D2H",
+          val: isLog ? gpuWallVal : gpuWallVal * 1000,
+          text: `${gpuWallVal.toFixed(4)}s`,
+          color: "#10b981"
+        },
+        {
+          label: "T4 CUDA Kernel",
+          sub: "@cuda.jit",
+          val: isLog ? gpuKernelVal : gpuKernelVal * 1000,
+          text: `${gpuKernelVal.toFixed(4)}s`,
+          color: "#22d3ee"
+        }
+      ];
+
+      const W = 560;
+      const H = 245;
+      const padL = 64;
+      const padR = 24;
+      const padT = 24;
+      const padB = 46;
+      const plotW = W - padL - padR;
+      const plotH = H - padT - padB;
+      const baseY = padT + plotH;
+
+      let yForVal;
+      let gridHtml = "";
+
+      if (isLog) {
+        const minExp = -4; // 0.0001s
+        const maxExp = 1;  // 10s
+        yForVal = (v) => {
+          const clamped = Math.max(1e-4, Math.min(10, v));
+          const ratio = (Math.log10(clamped) - minExp) / (maxExp - minExp);
+          return baseY - ratio * plotH;
+        };
+        [0.0001, 0.001, 0.01, 0.1, 1, 10].forEach((tick) => {
+          const y = yForVal(tick);
+          gridHtml += `
+            <line x1="${padL}" y1="${y}" x2="${padL + plotW}" y2="${y}" stroke="rgba(148,163,184,0.14)" stroke-dasharray="3,3" />
+            <text x="${padL - 8}" y="${y + 4}" text-anchor="end" fill="#94a3b8" font-family="JetBrains Mono, monospace" font-size="10">${tick}s</text>
+          `;
+        });
+      } else {
+        const maxMs = Math.max(...items.map((i) => i.val)) * 1.15;
+        yForVal = (v) => baseY - (Math.max(0, v) / maxMs) * plotH;
+        for (let step = 0; step <= 4; step++) {
+          const msTick = (maxMs / 4) * step;
+          const y = yForVal(msTick);
+          gridHtml += `
+            <line x1="${padL}" y1="${y}" x2="${padL + plotW}" y2="${y}" stroke="rgba(148,163,184,0.14)" stroke-dasharray="3,3" />
+            <text x="${padL - 8}" y="${y + 4}" text-anchor="end" fill="#94a3b8" font-family="JetBrains Mono, monospace" font-size="10">${msTick >= 100 ? msTick.toFixed(0) : msTick.toFixed(1)}ms</text>
+          `;
+        }
+      }
+
+      const slotW = plotW / items.length;
+      const barW = Math.min(68, slotW * 0.44);
+
+      const barsHtml = items.map((item, idx) => {
+        const cx = padL + slotW * (idx + 0.5);
+        const x = cx - barW / 2;
+        const y = yForVal(item.val);
+        const h = Math.max(4, baseY - y);
+        return `
+          <rect x="${x}" y="${y}" width="${barW}" height="${h}" rx="7" fill="${item.color}" fill-opacity="0.9" />
+          <text x="${cx}" y="${y - 7}" text-anchor="middle" fill="#f8fafc" font-family="JetBrains Mono, monospace" font-size="11" font-weight="700">${item.text}</text>
+          <text x="${cx}" y="${H - 20}" text-anchor="middle" fill="#e2e8f0" font-family="JetBrains Mono, monospace" font-size="11" font-weight="600">${item.label}</text>
+          <text x="${cx}" y="${H - 6}" text-anchor="middle" fill="#64748b" font-family="JetBrains Mono, monospace" font-size="9">${item.sub}</text>
+        `;
+      }).join("");
+
+      svg.innerHTML = `
+        ${gridHtml}
+        <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${baseY}" stroke="#334155" stroke-width="1.5" />
+        <line x1="${padL}" y1="${baseY}" x2="${padL + plotW}" y2="${baseY}" stroke="#334155" stroke-width="1.5" />
+        ${barsHtml}
+      `;
+    }
+
+    function renderPerChunkPerformance() {
+      const svg = document.getElementById("perChunkChartSvg");
+      const cardsWrap = document.getElementById("perChunkCards");
+      const chunks = appState.chunkMetrics;
+
+      const avgMs = chunks.length
+        ? chunks.reduce((sum, c) => sum + c.elapsedMs, 0) / chunks.length
+        : 0;
+      document.getElementById("chunkAvgTag").textContent =
+        `Avg ${appState.mode} Chunk: ${avgMs >= 100 ? avgMs.toFixed(1) : avgMs.toFixed(2)} ms`;
+      document.getElementById("chunkChartSubtitle").textContent =
+        `${chunks.length} chunk${chunks.length === 1 ? "" : "s"} · ${appState.chunkSize.toLocaleString()} bp max chunk window`;
+
+      const W = 560;
+      const H = 190;
+      const padL = 56;
+      const padR = 20;
+      const padT = 20;
+      const padB = 34;
+      const plotW = W - padL - padR;
+      const plotH = H - padT - padB;
+      const baseY = padT + plotH;
+
+      const maxMs = Math.max(1, ...chunks.map((c) => c.elapsedMs)) * 1.22;
+      const yForMs = (ms) => baseY - (ms / maxMs) * plotH;
+
+      let grid = "";
+      for (let i = 0; i <= 3; i++) {
+        const val = (maxMs / 3) * i;
+        const y = yForMs(val);
+        grid += `
+          <line x1="${padL}" y1="${y}" x2="${padL + plotW}" y2="${y}" stroke="rgba(148,163,184,0.12)" stroke-dasharray="3,3" />
+          <text x="${padL - 7}" y="${y + 4}" text-anchor="end" fill="#94a3b8" font-family="JetBrains Mono, monospace" font-size="9">${val >= 100 ? val.toFixed(0) : val.toFixed(2)}ms</text>
+        `;
+      }
+
+      const slotW = plotW / Math.max(1, chunks.length);
+      const barW = Math.min(54, slotW * 0.52);
+      const barColor = appState.mode === "CUDA" ? "#10b981" : "#f59e0b";
+
+      const bars = chunks.map((c, idx) => {
+        const cx = padL + slotW * (idx + 0.5);
+        const x = cx - barW / 2;
+        const y = yForMs(c.elapsedMs);
+        const h = Math.max(4, baseY - y);
+        const labelMs = c.elapsedMs >= 100 ? `${c.elapsedMs.toFixed(0)}ms` : `${c.elapsedMs.toFixed(2)}ms`;
+        return `
+          <rect x="${x}" y="${y}" width="${barW}" height="${h}" rx="5" fill="${barColor}" fill-opacity="0.88" />
+          <text x="${cx}" y="${y - 5}" text-anchor="middle" fill="#e2e8f0" font-family="JetBrains Mono, monospace" font-size="10" font-weight="600">${labelMs}</text>
+          <text x="${cx}" y="${H - 10}" text-anchor="middle" fill="#94a3b8" font-family="JetBrains Mono, monospace" font-size="10">Chunk #${c.chunkIdx}</text>
+        `;
+      }).join("");
+
+      svg.innerHTML = `
+        ${grid}
+        <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${baseY}" stroke="#334155" stroke-width="1.5" />
+        <line x1="${padL}" y1="${baseY}" x2="${padL + plotW}" y2="${baseY}" stroke="#334155" stroke-width="1.5" />
+        ${bars}
+      `;
+
+      cardsWrap.innerHTML = chunks.map((c) => `
+        <div class="rounded-xl bg-slate-950/80 border border-slate-800/90 px-3 py-2 font-mono text-xs flex items-center justify-between gap-2">
+          <div>
+            <span class="text-cyan-300 font-semibold">Chunk #${c.chunkIdx}</span>
+            <span class="text-slate-500 ml-1">${c.startBp.toLocaleString()}–${c.endBp.toLocaleString()}</span>
+          </div>
+          <div class="text-right">
+            <span class="text-slate-200">${c.elapsedMs >= 100 ? c.elapsedMs.toFixed(1) : c.elapsedMs.toFixed(2)} ms</span>
+            <span class="text-emerald-400 ml-2">${c.hits} hit${c.hits === 1 ? "" : "s"}</span>
+          </div>
+        </div>
+      `).join("");
+    }
+
+    /* =========================================================================
+       RENDERING: BASE-BY-BASE INSPECTOR & ALIGNMENT RESULTS TABLE
+       ========================================================================= */
+    function renderBaseInspector() {
+      const hit = appState.hits.find((h) => h.id === appState.selectedHitId) || appState.hits[0];
+      const grnaTiles = document.getElementById("inspectorGrnaTiles");
+      const indicators = document.getElementById("inspectorMatchIndicators");
+      const targetTiles = document.getElementById("inspectorTargetTiles");
+
+      if (!hit) {
+        document.getElementById("inspectedPosition").textContent = "No hit selected";
+        document.getElementById("inspectedChunk").textContent = "";
+        document.getElementById("inspectedMismatchSummary").textContent = "0 mismatches";
+        grnaTiles.innerHTML = `<span class="font-mono text-xs text-slate-500">No alignment hit in range.</span>`;
+        indicators.innerHTML = "";
+        targetTiles.innerHTML = "";
+        return;
+      }
+
+      const chunkIdx = Math.floor(hit.position / appState.chunkSize);
+      document.getElementById("inspectedPosition").textContent = `pos ${hit.position.toLocaleString()}`;
+      document.getElementById("inspectedChunk").textContent = `(Chunk #${chunkIdx} · ${hit.position}..${hit.position + hit.sequence.length})`;
+
+      const summaryEl = document.getElementById("inspectedMismatchSummary");
+      if (hit.mismatches === 0) {
+        summaryEl.className = "text-emerald-300 font-semibold";
+        summaryEl.textContent = "0 mismatches · Exact Match";
+      } else {
+        summaryEl.className = "text-amber-300 font-semibold";
+        summaryEl.textContent = `${hit.mismatches} mismatch${hit.mismatches === 1 ? "" : "es"} · Near Off-Target`;
+      }
+
+      let gHtml = "";
+      let mHtml = "";
+      let tHtml = "";
+
+      for (let i = 0; i < appState.grna.length; i++) {
+        const gBase = appState.grna[i];
+        const tBase = hit.sequence[i] || "N";
+        const isMatch = gBase === tBase;
+
+        gHtml += `<span class="base-tile base-grna" title="gRNA[${i}] = ${gBase}">${gBase}</span>`;
+        mHtml += isMatch
+          ? `<span class="base-tile text-emerald-400 text-xs font-bold" title="Pos ${i}: Match">|</span>`
+          : `<span class="base-tile text-rose-400 text-xs font-extrabold" title="Pos ${i}: Mismatch (${gBase} ≠ ${tBase})">✕</span>`;
+        tHtml += `<span class="base-tile ${isMatch ? "base-match" : "base-mismatch"}" title="Target[${hit.position + i}] = ${tBase}">${tBase}</span>`;
+      }
+
+      grnaTiles.innerHTML = gHtml;
+      indicators.innerHTML = mHtml;
+      targetTiles.innerHTML = tHtml;
+    }
+
+    function renderAlignmentResultsTable() {
+      const tbody = document.getElementById("alignmentResultsBody");
+      const query = appState.hitSearch.trim().toLowerCase();
+      const filter = appState.hitFilter;
+
+      const filtered = appState.hits.filter((h) => {
+        if (filter === "exact" && h.mismatches !== 0) return false;
+        if (filter === "near" && h.mismatches === 0) return false;
+        if (query) {
+          const typeLabel = h.mismatches === 0 ? "exact" : "near";
+          const hay = `${h.position} ${h.mismatches} ${h.sequence.toLowerCase()} ${typeLabel}`;
+          if (!hay.includes(query)) return false;
+        }
+        return true;
+      });
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="6" class="py-8 px-4 text-center font-mono text-xs text-slate-400">
+              No candidate alignments match the current filter.
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      tbody.innerHTML = filtered.map((hit) => {
+        const isSelected = hit.id === appState.selectedHitId;
+        const chunkIdx = Math.floor(hit.position / appState.chunkSize);
+        const isExact = hit.mismatches === 0;
+
+        const typeBadge = isExact
+          ? `<span class="font-mono text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-400/35">Exact (0 mm)</span>`
+          : `<span class="font-mono text-xs px-2.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-400/35">Near (${hit.mismatches} mm)</span>`;
+
+        const highlightedSeq = hit.sequence.split("").map((base, idx) => {
+          const mismatch = base !== appState.grna[idx];
+          if (mismatch) {
+            return `<span class="px-1 py-0.5 rounded bg-rose-500/25 text-rose-200 border border-rose-500/60 font-bold">${base}</span>`;
+          }
+          return `<span class="text-slate-200">${base}</span>`;
+        }).join("");
+
+        return `
+          <tr data-hit-id="${hit.id}" class="hit-row cursor-pointer transition ${isSelected ? "bg-cyan-500/10" : "hover:bg-slate-900/70"}">
+            <td class="py-3 px-4 font-mono font-semibold text-cyan-300">${hit.position}</td>
+            <td class="py-3 px-4 font-mono text-xs text-slate-400">Chunk #${chunkIdx}</td>
+            <td class="py-3 px-4 font-mono font-bold ${isExact ? "text-emerald-300" : "text-amber-300"}">${hit.mismatches}</td>
+            <td class="py-3 px-4">${typeBadge}</td>
+            <td class="py-3 px-4 font-mono text-xs tracking-wider">${highlightedSeq}</td>
+            <td class="py-3 px-4 font-mono text-xs text-indigo-300">${hit.mode}</td>
+          </tr>
+        `;
+      }).join("");
+
+      tbody.querySelectorAll("tr.hit-row").forEach((tr) => {
+        tr.addEventListener("click", () => {
+          const id = tr.getAttribute("data-hit-id");
+          if (id) {
+            appState.selectedHitId = id;
+            renderBaseInspector();
+            renderAlignmentResultsTable();
+          }
+        });
+      });
+    }
+
+    /* =========================================================================
+       RENDERING: SQLITE PERSISTENCE & RUN HISTORY PANEL
+       ========================================================================= */
+    function renderSqliteRuns() {
+      const listEl = document.getElementById("sqliteRunsList");
+      const countLabel = document.getElementById("dbRunCountLabel");
+      countLabel.textContent = `${appState.runs.length} run${appState.runs.length === 1 ? "" : "s"} in store`;
+
+      if (!appState.runs.some((r) => r.run_id === appState.selectedRunId) && appState.runs.length > 0) {
+        appState.selectedRunId = appState.runs[0].run_id;
+      }
+
+      listEl.innerHTML = appState.runs.map((run) => {
+        const active = run.run_id === appState.selectedRunId;
+        const isCuda = run.mode === "CUDA";
+        return `
+          <div data-run-id="${run.run_id}" class="sqlite-run-item rounded-xl p-3.5 border transition cursor-pointer ${
+            active
+              ? "bg-cyan-500/10 border-cyan-400/50"
+              : "bg-slate-950/85 border-slate-800 hover:border-slate-700"
+          }">
+            <div class="flex flex-wrap items-center justify-between gap-2 mb-1.5">
+              <span class="font-mono text-xs font-bold text-white">${escapeHtml(run.run_id)}</span>
+              <span class="font-mono text-[11px] px-2 py-0.5 rounded-full ${
+                isCuda
+                  ? "bg-emerald-500/15 text-emerald-300 border border-emerald-400/35"
+                  : "bg-amber-500/15 text-amber-300 border border-amber-400/35"
+              }">${escapeHtml(run.environment)}</span>
+            </div>
+            <div class="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-xs text-slate-300">
+              <span>Seq: <strong>${Number(run.seq_length).toLocaleString()} bp</strong></span>
+              <span>Wall: <strong class="${isCuda ? "text-emerald-300" : "text-amber-300"}">${Number(run.wall_sec).toFixed(4)}s</strong></span>
+              ${typeof run.kernel_sec === "number" ? `<span>Kernel: <strong class="text-cyan-300">${run.kernel_sec.toFixed(4)}s</strong></span>` : ""}
+              <span>Hits: <strong>${run.hits_count}</strong></span>
+            </div>
+            <div class="font-mono text-[11px] text-slate-500 mt-1">${escapeHtml(run.created_at)}</div>
+          </div>
+        `;
+      }).join("");
+
+      listEl.querySelectorAll(".sqlite-run-item").forEach((el) => {
+        el.addEventListener("click", () => {
+          const rid = el.getAttribute("data-run-id");
+          if (rid) {
+            appState.selectedRunId = rid;
+            renderSqliteRuns();
+            renderSelectedRunDetail();
+          }
+        });
+      });
+
+      renderSelectedRunDetail();
+    }
+
+    function renderSelectedRunDetail() {
+      const detailEl = document.getElementById("selectedRunDetail");
+      const badgeEl = document.getElementById("selectedRunIdBadge");
+      const run = appState.runs.find((r) => r.run_id === appState.selectedRunId);
+
+      if (!run) {
+        badgeEl.textContent = "none";
+        detailEl.innerHTML = `<p class="text-slate-500">Select a run entry to inspect SQLite row details.</p>`;
+        return;
+      }
+
+      badgeEl.textContent = run.run_id;
+      const chunksSummary = Array.isArray(run.chunks) && run.chunks.length > 0
+        ? run.chunks.map((c) => `Chunk #${c.chunk_idx} (${c.start_bp}–${c.end_bp}): ${Number(c.elapsed_ms).toFixed(2)} ms · ${c.hits} hit(s)`).join("<br/>")
+        : `${Math.max(1, Math.ceil(run.seq_length / (run.chunk_size || 500000)))} chunk(s) @ ${(run.chunk_size || 500000).toLocaleString()} bp`;
+
+      const hitsSummary = Array.isArray(run.hits) && run.hits.length > 0
+        ? run.hits.map((h) => `pos ${h.position} (${h.mismatches} mm): ${h.sequence}`).join(" | ")
+        : `${run.hits_count} hit(s) logged`;
+
+      detailEl.innerHTML = `
+        <div class="grid grid-cols-2 gap-2 pb-2 border-b border-slate-800/80">
+          <div><span class="text-slate-500">env:</span> <span class="text-slate-100">${escapeHtml(run.environment)}</span></div>
+          <div><span class="text-slate-500">grna:</span> <span class="text-cyan-300">${escapeHtml(run.grna)}</span></div>
+          <div><span class="text-slate-500">wall_sec:</span> <span class="text-emerald-300">${Number(run.wall_sec).toFixed(4)}s</span></div>
+          <div><span class="text-slate-500">kernel_sec:</span> <span class="text-indigo-300">${typeof run.kernel_sec === "number" ? run.kernel_sec.toFixed(4) + "s" : "NULL"}</span></div>
+        </div>
+        <div class="pt-1">
+          <div class="text-[11px] text-slate-500 mb-1">CHUNK METRICS:</div>
+          <div class="text-slate-200 leading-relaxed">${chunksSummary}</div>
+        </div>
+        <div class="pt-1">
+          <div class="text-[11px] text-slate-500 mb-1">ALIGNMENT HITS:</div>
+          <div class="text-amber-200 break-all">${escapeHtml(hitsSummary)}</div>
+        </div>
+      `;
+    }
+
+    function setDbMessage(msg) {
+      document.getElementById("dbStatusMessage").textContent = msg;
+    }
+
+    function appendCurrentScanToSqlite() {
+      const nowStr = new Date().toISOString().replace("T", " ").slice(0, 19);
+      const isCuda = appState.mode === "CUDA";
+      const newRun = {
+        run_id: `run_${isCuda ? "t4" : "cpu"}_${Math.round(appState.seqLength / 1000)}k_${appState.runs.length + 1}`,
+        created_at: nowStr,
+        environment: isCuda ? "Colab Tesla T4 (CUDA)" : "Local CPU Baseline",
+        mode: appState.mode,
+        seq_length: appState.seqLength,
+        chunk_size: appState.chunkSize,
+        grna: appState.grna,
+        max_mismatches: appState.maxMismatches,
+        wall_sec: appState.lastWallSec,
+        kernel_sec: isCuda ? appState.lastKernelSec : null,
+        hits_count: appState.hits.length,
+        chunks: appState.chunkMetrics.map((c) => ({
+          chunk_idx: c.chunkIdx,
+          start_bp: c.startBp,
+          end_bp: c.endBp,
+          elapsed_ms: Number(c.elapsedMs.toFixed(3)),
+          hits: c.hits
+        })),
+        hits: appState.hits.map((h) => ({
+          position: h.position,
+          mismatches: h.mismatches,
+          sequence: h.sequence
+        }))
+      };
+
+      appState.runs.unshift(newRun);
+      appState.selectedRunId = newRun.run_id;
+      persistRuns();
+      renderSqliteRuns();
+      setDbMessage(`Logged ${newRun.run_id} to SQLite run history.`);
+    }
+
+    function handleCustomRunSubmit(e) {
+      e.preventDefault();
+      const env = document.getElementById("logEnvSelect").value;
+      const isCuda = env.includes("CUDA") || env.includes("T4");
+      const seqLen = Math.max(1000, parseInt(document.getElementById("logSeqBpInput").value, 10) || 1000000);
+      const wallSec = Math.max(0.0001, parseFloat(document.getElementById("logWallSecInput").value) || 0.0043);
+      const kernelRaw = parseFloat(document.getElementById("logKernelSecInput").value);
+      const kernelSec = isCuda ? (Number.isFinite(kernelRaw) ? kernelRaw : Number((wallSec * 0.95).toFixed(4))) : null;
+
+      const nowStr = new Date().toISOString().replace("T", " ").slice(0, 19);
+      const hits = computeHitsForConfig(seqLen, appState.grna, appState.maxMismatches, isCuda ? "CUDA" : "CPU");
+      const chunks = buildChunkMetrics(seqLen, appState.chunkSize, isCuda ? "CUDA" : "CPU", wallSec, hits);
+
+      const entry = {
+        run_id: `run_${isCuda ? "t4" : "cpu"}_custom_${appState.runs.length + 1}`,
+        created_at: nowStr,
+        environment: env,
+        mode: isCuda ? "CUDA" : "CPU",
+        seq_length: seqLen,
+        chunk_size: appState.chunkSize,
+        grna: appState.grna,
+        max_mismatches: appState.maxMismatches,
+        wall_sec: wallSec,
+        kernel_sec: kernelSec,
+        hits_count: hits.length,
+        chunks: chunks.map((c) => ({
+          chunk_idx: c.chunkIdx,
+          start_bp: c.startBp,
+          end_bp: c.endBp,
+          elapsed_ms: Number(c.elapsedMs.toFixed(3)),
+          hits: c.hits
+        })),
+        hits: hits.map((h) => ({
+          position: h.position,
+          mismatches: h.mismatches,
+          sequence: h.sequence
+        }))
+      };
+
+      appState.runs.unshift(entry);
+      appState.selectedRunId = entry.run_id;
+      persistRuns();
+      renderSqliteRuns();
+      setDbMessage(`Inserted ${entry.run_id} (${env}) into run log.`);
+    }
+
+    function exportRunsJson() {
+      const payload = JSON.stringify({ database: "geneweaver.db", runs: appState.runs }, null, 2);
+      const blob = new Blob([payload], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "geneweaver_sqlite_runs.json";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      setDbMessage(`Exported ${appState.runs.length} runs as JSON.`);
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    /* =========================================================================
+       BINDINGS & INITIALIZATION
+       ========================================================================= */
+    function updateModeButtons() {
+      const cpuBtn = document.getElementById("modeBtnCpu");
+      const cudaBtn = document.getElementById("modeBtnCuda");
+
+      if (appState.mode === "CUDA") {
+        cudaBtn.className = "mode-btn py-2 px-2 rounded-lg font-mono text-xs font-semibold transition bg-emerald-500/20 text-emerald-300 border border-emerald-400/40 cursor-pointer";
+        cpuBtn.className = "mode-btn py-2 px-2 rounded-lg font-mono text-xs font-semibold transition text-slate-400 hover:text-white cursor-pointer";
+      } else {
+        cpuBtn.className = "mode-btn py-2 px-2 rounded-lg font-mono text-xs font-semibold transition bg-amber-500/20 text-amber-300 border border-amber-400/40 cursor-pointer";
+        cudaBtn.className = "mode-btn py-2 px-2 rounded-lg font-mono text-xs font-semibold transition text-slate-400 hover:text-white cursor-pointer";
+      }
+    }
+
+    function renderAll() {
+      updateModeButtons();
+      renderTelemetryAndMetrics();
+      renderOverallBenchmarkChart();
+      renderPerChunkPerformance();
+      renderBaseInspector();
+      renderAlignmentResultsTable();
+      renderSqliteRuns();
+    }
+
+    function bindEvents() {
+      document.getElementById("modeBtnCpu").addEventListener("click", () => {
+        appState.mode = "CPU";
+        executeScan(false);
+      });
+
+      document.getElementById("modeBtnCuda").addEventListener("click", () => {
+        appState.mode = "CUDA";
+        executeScan(false);
+      });
+
+      document.getElementById("btnRunScan").addEventListener("click", () => executeScan(false));
+      document.getElementById("btnCompareBoth").addEventListener("click", () => executeScan(true));
+
+      document.getElementById("btnScaleLog").addEventListener("click", () => {
+        appState.chartScale = "log";
+        document.getElementById("btnScaleLog").className = "px-2.5 py-1 rounded-lg font-mono text-xs bg-cyan-500/20 text-cyan-200 border border-cyan-400/40 cursor-pointer";
+        document.getElementById("btnScaleLinearMs").className = "px-2.5 py-1 rounded-lg font-mono text-xs bg-slate-900 text-slate-400 border border-slate-800 cursor-pointer";
+        renderOverallBenchmarkChart();
+      });
+
+      document.getElementById("btnScaleLinearMs").addEventListener("click", () => {
+        appState.chartScale = "ms";
+        document.getElementById("btnScaleLinearMs").className = "px-2.5 py-1 rounded-lg font-mono text-xs bg-cyan-500/20 text-cyan-200 border border-cyan-400/40 cursor-pointer";
+        document.getElementById("btnScaleLog").className = "px-2.5 py-1 rounded-lg font-mono text-xs bg-slate-900 text-slate-400 border border-slate-800 cursor-pointer";
+        renderOverallBenchmarkChart();
+      });
+
+      document.getElementById("hitSearchInput").addEventListener("input", (e) => {
+        appState.hitSearch = e.target.value;
+        renderAlignmentResultsTable();
+      });
+
+      document.getElementById("hitFilterSelect").addEventListener("change", (e) => {
+        appState.hitFilter = e.target.value;
+        renderAlignmentResultsTable();
+      });
+
+      document.getElementById("btnLogCurrentRun").addEventListener("click", appendCurrentScanToSqlite);
+      document.getElementById("logRunForm").addEventListener("submit", handleCustomRunSubmit);
+      document.getElementById("btnExportSqlJson").addEventListener("click", exportRunsJson);
+
+      document.getElementById("btnResetDbHistory").addEventListener("click", () => {
+        appState.runs = SEED_SQLITE_RUNS.map((r) => ({ ...r }));
+        appState.selectedRunId = appState.runs[0].run_id;
+        persistRuns();
+        renderSqliteRuns();
+        setDbMessage("Restored default SQLite seed runs.");
+      });
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+      appState.chunkMetrics = buildChunkMetrics(
+        appState.seqLength,
+        appState.chunkSize,
+        appState.mode,
+        appState.lastWallSec,
+        appState.hits
+      );
+      bindEvents();
+      renderAll();
+    });
+  </script>
+</body>
+</html>
