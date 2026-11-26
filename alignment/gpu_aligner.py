@@ -82,3 +82,40 @@ def run_gpu_alignment(target_seq: np.ndarray, grna_seq: np.ndarray, max_mismatch
 
     elapsed_time = time.perf_counter() - start_time
     return results, elapsed_time, "CUDA"
+
+from typing import Any, Dict, Optional
+from alignment.dask_gpu_aligner import detect_gpu_count, run_distributed_gpu_alignment
+
+
+def _single_gpu_slice_runner(
+    seq_slice: np.ndarray,
+    grna_encoded: np.ndarray,
+    max_mismatches: int,
+) -> List[Tuple[int, int]]:
+    """Adapter around run_gpu_alignment for Dask worker slices."""
+    matches, _, _ = run_gpu_alignment(seq_slice, grna_encoded, max_mismatches)
+    return matches
+
+
+def align_distributed(
+    seq_encoded: np.ndarray,
+    grna_encoded: np.ndarray,
+    max_mismatches: int = 3,
+    n_gpus: Optional[int] = None,
+    partitions_per_worker: int = 1,
+) -> Dict[str, Any]:
+    """
+    Coordinate GPU sequence alignment across available GPUs using Dask.
+    Balances sequence slices evenly across 2 GPUs when two GPUs are present.
+    """
+    gpu_count = n_gpus if n_gpus is not None else detect_gpu_count()
+    effective_gpus = max(1, gpu_count)
+
+    return run_distributed_gpu_alignment(
+        seq_encoded=seq_encoded,
+        grna_encoded=grna_encoded,
+        max_mismatches=max_mismatches,
+        gpu_kernel_runner=_single_gpu_slice_runner,
+        n_gpus=effective_gpus,
+        partitions_per_worker=partitions_per_worker,
+    )
