@@ -59,3 +59,36 @@ def test_two_gpu_even_balancing_and_boundary_hit():
     assert actual == expected
     assert (boundary_pos, 0) in actual
     assert (mm_pos, 2) in actual
+
+
+def test_multi_partition_boundary_dedup_and_parity():
+    rng = np.random.default_rng(123)
+    seq = rng.integers(0, 4, size=1_000_000, dtype=np.uint8)
+    grna = rng.integers(0, 4, size=20, dtype=np.uint8)
+
+    boundary_positions = [249_990, 250_000, 499_995, 500_000, 749_985, 750_000]
+    for pos in boundary_positions:
+        seq[pos : pos + len(grna)] = grna
+
+    chunks = build_balanced_chunks(
+        seq_len=len(seq), grna_len=len(grna), num_workers=2, partitions_per_worker=2
+    )
+    assert len(chunks) == 4
+    for c in chunks:
+        assert (c.logical_end - c.logical_start) == 250_000
+
+    expected = _mock_cpu_slice_kernel(seq, grna, max_mismatches=1)
+    out = run_distributed_gpu_alignment(
+        seq_encoded=seq,
+        grna_encoded=grna,
+        max_mismatches=1,
+        gpu_kernel_runner=_mock_cpu_slice_kernel,
+        n_gpus=2,
+        partitions_per_worker=2,
+    )
+
+    actual = [(h["position"], h["mismatches"]) for h in out["hits"]]
+    assert len(actual) == len(set(actual))
+    assert actual == expected
+    for pos in boundary_positions:
+        assert (pos, 0) in actual

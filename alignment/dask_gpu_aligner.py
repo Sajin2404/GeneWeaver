@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 from dask.distributed import Client, LocalCluster
@@ -151,6 +151,16 @@ def run_distributed_gpu_alignment(
     detected = detect_gpu_count()
     target_gpus = n_gpus if n_gpus is not None else max(1, detected)
 
+    if len(seq_arr) < len(grna_arr) or len(grna_arr) == 0:
+        return {
+            "requested_gpus": target_gpus,
+            "workers_used": 0,
+            "chunks_processed": 0,
+            "bases_per_gpu": {},
+            "chunk_summaries": [],
+            "hits": [],
+        }
+
     specs = build_balanced_chunks(
         seq_len=len(seq_arr),
         grna_len=len(grna_arr),
@@ -177,7 +187,7 @@ def run_distributed_gpu_alignment(
             futures = [
                 client.submit(
                     _worker_align_slice,
-                    seq_arr[spec.padded_start : spec.padded_end],
+                    np.ascontiguousarray(seq_arr[spec.padded_start : spec.padded_end]),
                     grna_arr,
                     max_mismatches,
                     spec,
@@ -191,13 +201,20 @@ def run_distributed_gpu_alignment(
         cluster.close()
 
     all_hits: List[Dict[str, Any]] = []
+    bases_per_gpu: Dict[Any, int] = {}
     for res in chunk_results:
         all_hits.extend(res["hits"])
+        key = res["gpu_id"] if res["gpu_id"] is not None else f"chunk_{res['chunk_index']}"
+        bases_per_gpu[key] = bases_per_gpu.get(key, 0) + (res["logical_end"] - res["logical_start"])
+
     all_hits.sort(key=lambda h: (h["position"], h["mismatches"]))
+    active_workers = min(target_gpus, len(chunk_results))
 
     return {
-        "workers_used": target_gpus,
+        "requested_gpus": target_gpus,
+        "workers_used": active_workers,
         "chunks_processed": len(chunk_results),
+        "bases_per_gpu": bases_per_gpu,
         "chunk_summaries": [
             {
                 "chunk_index": r["chunk_index"],
