@@ -66,7 +66,8 @@ def test_multi_partition_boundary_dedup_and_parity():
     seq = rng.integers(0, 4, size=1_000_000, dtype=np.uint8)
     grna = rng.integers(0, 4, size=20, dtype=np.uint8)
 
-    boundary_positions = [249_990, 250_000, 499_995, 500_000, 749_985, 750_000]
+    # Non-overlapping 20-bp hits straddling or starting right at partition boundaries
+    boundary_positions = [249_990, 250_020, 499_990, 500_020, 749_990, 750_020]
     for pos in boundary_positions:
         seq[pos : pos + len(grna)] = grna
 
